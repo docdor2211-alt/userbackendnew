@@ -11,14 +11,8 @@ const labCategorySchema = new mongoose.Schema(
 
     // 🔹 Image (icon)
     image: {
-      url: {
-        type: String,
-        required: [true, "Image URL required"],
-      },
-      publicId: {
-        type: String,
-        required: [true, "Image publicId required"],
-      },
+      type: mongoose.Schema.Types.Mixed,
+      default: () => ({ url: "", publicId: "" }),
     },
   },
   { timestamps: true }

@@ -7,162 +7,172 @@ const MedicineCategory = require(
 // ==========================================
 // ✅ CREATE CATEGORY
 // ==========================================
-exports.createMedicineCategory =
-  async (req, res) => {
-    try {
+exports.createMedicineCategory = async (req, res) => {
+  try {
+    const {
+      category,
+      title,
+      image,
+      isFree,
+      parentId,
+      slug,
+      isActive,
+    } = req.body;
 
-      const {
-        category,
-        title
-      } = req.body;
-
-      // ✅ VALIDATION
-      if (!category || !title) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "category & title required"
-        });
-      }
-
-      // ✅ CREATE
-      const data =
-        await MedicineCategory.create({
-          category,
-          title,
-          image: req.body.image || {}
-        });
-
-      res.status(201).json({
-        success: true,
-        message:
-          "Medicine category created successfully",
-        data
-      });
-
-    } catch (err) {
-
-      res.status(500).json({
+    // ✅ VALIDATION - title is required
+    if (!title) {
+      return res.status(400).json({
         success: false,
-        message: err.message
+        message: "Title is required",
       });
     }
+
+    const categorySlug =
+      slug ||
+      title
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+
+    let imageData = image || {};
+    if (typeof imageData === "string") {
+      imageData = { url: imageData, publicId: "" };
+    }
+
+    // ✅ CREATE
+    const data = await MedicineCategory.create({
+      category: category || null,
+      title: title.trim(),
+      image: imageData,
+      isFree: Boolean(isFree),
+      parentId: parentId || null,
+      slug: categorySlug,
+      isActive: isActive !== undefined ? isActive : true,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Medicine category created successfully",
+      data,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
+
+// Helper to format category according to doc
+function formatCategory(cat) {
+  const doc = cat.toObject ? cat.toObject() : cat;
+  const img =
+    typeof doc.image === "string"
+      ? { url: doc.image, publicId: "" }
+      : doc.image || { url: "", publicId: "" };
+
+  return {
+    _id: doc._id?.toString() || "",
+    id: doc._id?.toString() || "",
+    title: doc.title || "",
+    image: {
+      url: img.url || "",
+      publicId: img.publicId || "",
+    },
+    isFree: doc.isFree ?? false,
+    isActive: doc.isActive ?? true,
+    parentId: doc.parentId ? doc.parentId.toString() : null,
+    slug: doc.slug || "",
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
+    ...(doc.category ? { category: doc.category } : {}),
   };
-
-
+}
 
 // ==========================================
 // ✅ GET ALL
 // ==========================================
-exports.getMedicineCategories =
-  async (req, res) => {
-    try {
-
-      const data =
-        await MedicineCategory.find({
-          isActive: true
-        })
-
-        .populate(
-          "category",
-          "title"
-        )
-
-        .sort({
-          createdAt: -1
-        });
-
-      res.json({
-        success: true,
-        count: data.length,
-        data
+exports.getMedicineCategories = async (req, res) => {
+  try {
+    const data = await MedicineCategory.find({
+      isActive: true,
+    })
+      .populate("category", "title")
+      .sort({
+        createdAt: -1,
       });
 
-    } catch (err) {
+    const formatted = data.map(formatCategory);
 
-      res.status(500).json({
-        success: false,
-        message: err.message
-      });
-    }
-  };
-
-
+    res.json({
+      success: true,
+      count: formatted.length,
+      data: formatted,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
 
 // ==========================================
 // ✅ GET BY MAIN CATEGORY
 // ==========================================
-exports.getByCategory =
-  async (req, res) => {
-    try {
+exports.getByCategory = async (req, res) => {
+  try {
+    const data = await MedicineCategory.find({
+      category: req.params.id,
+      isActive: true,
+    }).sort({
+      createdAt: -1,
+    });
 
-      const data =
-        await MedicineCategory.find({
-          category:
-            req.params.id,
+    const formatted = data.map(formatCategory);
 
-          isActive: true
-        })
-
-        .sort({
-          createdAt: -1
-        });
-
-      res.json({
-        success: true,
-        count: data.length,
-        data
-      });
-
-    } catch (err) {
-
-      res.status(500).json({
-        success: false,
-        message: err.message
-      });
-    }
-  };
-
-
+    res.json({
+      success: true,
+      count: formatted.length,
+      data: formatted,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
 
 // ==========================================
 // ✅ GET SINGLE
 // ==========================================
-exports.getMedicineCategoryById =
-  async (req, res) => {
-    try {
+exports.getMedicineCategoryById = async (req, res) => {
+  try {
+    const data = await MedicineCategory.findById(req.params.id).populate(
+      "category",
+      "title"
+    );
 
-      const data =
-        await MedicineCategory.findById(
-          req.params.id
-        )
-
-        .populate(
-          "category",
-          "title"
-        );
-
-      if (!data) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "Medicine category not found"
-        });
-      }
-
-      res.json({
-        success: true,
-        data
-      });
-
-    } catch (err) {
-
-      res.status(500).json({
+    if (!data) {
+      return res.status(404).json({
         success: false,
-        message: err.message
+        message: "Medicine category not found",
       });
     }
-  };
+
+    res.json({
+      success: true,
+      data: formatCategory(data),
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
 
 
 

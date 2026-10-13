@@ -33,25 +33,32 @@ const {
 
 
 
+// Optional auth middleware: extracts user if token provided, but doesn't block if absent
+const optionalAuth = (req, res, next) => {
+  if (
+    req.headers.authorization &&
+    req.headers.authorization.startsWith("Bearer")
+  ) {
+    return protect(req, res, next);
+  }
+  next();
+};
+
 // ==========================================
 // USER
 // ==========================================
 
-
 // CREATE BOOKING
 router.post(
   "/create",
-  protect,
-  userOnly,
+  optionalAuth,
   createLabBooking
 );
-
 
 // VERIFY PAYMENT
 router.post(
   "/verify-payment",
-  protect,
-  userOnly,
+  optionalAuth,
   verifyLabPayment
 );
 

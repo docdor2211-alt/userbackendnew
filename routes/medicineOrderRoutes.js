@@ -153,19 +153,13 @@ const router =
 // ==========================================
 
 const {
-
   createMedicineOrder,
-
   verifyMedicinePayment,
-
   getAllMedicineOrders,
-
   getSingleMedicineOrder,
-
   getMyMedicineOrders,
-
+  getOrdersByUserId,
   updateMedicineOrderStatus,
-
 } = require(
   "../controllers/medicineOrderController"
 );
@@ -175,90 +169,115 @@ const {
 // ==========================================
 
 const {
-
   protect,
-
   adminOnly,
-
   userOnly,
-
 } = require(
   "../middleware/authMiddleware"
 );
 
+// Middleware supporting token or body user
+const userAuthOrBody = (req, res, next) => {
+  if (
+    req.headers.authorization &&
+    req.headers.authorization.startsWith("Bearer")
+  ) {
+    return protect(req, res, () => {
+      userOnly(req, res, next);
+    });
+  }
+  if (req.body.user) {
+    return next();
+  }
+  return res.status(401).json({
+    success: false,
+    message: "Not authorized, token or user missing",
+  });
+};
+
+const verifyAuth = (req, res, next) => {
+  if (
+    req.headers.authorization &&
+    req.headers.authorization.startsWith("Bearer")
+  ) {
+    return protect(req, res, next);
+  }
+  if (req.body.orderId || req.body.order_id || req.body.razorpay_order_id) {
+    return next();
+  }
+  return res.status(401).json({
+    success: false,
+    message: "Not authorized, token missing",
+  });
+};
+
+const optionalAuth = (req, res, next) => {
+  if (
+    req.headers.authorization &&
+    req.headers.authorization.startsWith("Bearer")
+  ) {
+    return protect(req, res, next);
+  }
+  next();
+};
 
 // ======================================================
 // 👤 USER ROUTES
 // ======================================================
 
-
 // ==========================================
 // CREATE ORDER
 // ==========================================
-
 router.post(
   "/create",
-
-  protect,
-
-  userOnly,
-
+  userAuthOrBody,
   createMedicineOrder
 );
-
 
 // ==========================================
 // VERIFY PAYMENT
 // ==========================================
-
 router.post(
   "/verify-payment",
-
-  protect,
-
-  userOnly,
-
+  verifyAuth,
   verifyMedicinePayment
 );
-
 
 // ==========================================
 // GET MY ORDERS
 // ==========================================
-
 router.get(
   "/my-orders",
-
   protect,
-
   userOnly,
-
   getMyMedicineOrders
 );
-// ==========================================
-// GET ALL ORDERS
-// ==========================================
 
+// ==========================================
+// GET ALL ORDERS (ADMIN)
+// ==========================================
 router.get(
   "/all",
-
   protect,
-
   adminOnly,
-
   getAllMedicineOrders
 );
 
+// ==========================================
+// GET USER ORDERS (EXPLICIT)
+// ==========================================
+router.get(
+  "/user/:userId",
+  optionalAuth,
+  getOrdersByUserId
+);
 
 // ==========================================
-// GET SINGLE ORDER
+// GET SINGLE ORDER OR USER ORDERS BY ID
 // ==========================================
-
 router.get(
   "/:id",
-
-  protect,
-
+  optionalAuth,
   getSingleMedicineOrder
 );
 

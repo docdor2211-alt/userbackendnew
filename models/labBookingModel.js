@@ -12,12 +12,9 @@ const labBookingSchema =
       // =========================
 
       user: {
-        type:
-          mongoose.Schema.Types.ObjectId,
-
+        type: mongoose.Schema.Types.ObjectId,
         ref: "User",
-
-        required: true,
+        required: false,
       },
 
 
@@ -27,15 +24,12 @@ const labBookingSchema =
 
       testName: {
         type: String,
-
         required: true,
-
         trim: true,
       },
 
       price: {
         type: Number,
-
         required: true,
       },
 
@@ -46,26 +40,20 @@ const labBookingSchema =
 
       status: {
         type: String,
-
         enum: [
-
           // DEFAULT
           "Pending",
-
           // LAB MANAGEMENT
           "Accepted",
           "Rejected",
-
           // LAB PROCESS
           "Confirmed",
           "Sample Collected",
           "Processing",
           "Completed",
-
           // CANCEL
           "Cancelled",
         ],
-
         default: "Pending",
       },
 
@@ -75,14 +63,12 @@ const labBookingSchema =
       // =========================
 
       sampleCollectionType: {
-
         type: String,
-
         enum: [
           "Home",
+          "Lab",
           "Lab Visit",
         ],
-
         default: "Home",
       },
 
@@ -92,9 +78,8 @@ const labBookingSchema =
       // =========================
 
       scheduledDate: {
-        type: Date,
-
-        required: true,
+        type: mongoose.Schema.Types.Mixed,
+        default: "",
       },
 
 
@@ -104,7 +89,6 @@ const labBookingSchema =
 
       reportUrl: {
         type: String,
-
         default: "",
       },
 
@@ -114,28 +98,22 @@ const labBookingSchema =
       // =========================
 
       paymentMethod: {
-
         type: String,
-
         enum: [
           "COD",
           "ONLINE",
         ],
-
         default: "ONLINE",
       },
 
 
       paymentStatus: {
-
         type: String,
-
         enum: [
           "PENDING",
           "PAID",
           "FAILED",
         ],
-
         default: "PENDING",
       },
 
@@ -146,19 +124,16 @@ const labBookingSchema =
 
       razorpayOrderId: {
         type: String,
-
         default: "",
       },
 
       razorpayPaymentId: {
         type: String,
-
         default: "",
       },
 
       razorpaySignature: {
         type: String,
-
         default: "",
       },
 
@@ -169,7 +144,6 @@ const labBookingSchema =
 
       isCompleted: {
         type: Boolean,
-
         default: false,
       },
 
@@ -181,7 +155,6 @@ const labBookingSchema =
 
   );
 
-module.exports = mongoose.model(
-  "LabBooking",
-  labBookingSchema
-);
+module.exports =
+  mongoose.models.LabBooking ||
+  mongoose.model("LabBooking", labBookingSchema);

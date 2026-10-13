@@ -17,17 +17,25 @@ const checkupTypeSchema = new mongoose.Schema({
   },
 
   image: {
-
-    url: String,
-
-    publicId: String,
+    type: mongoose.Schema.Types.Mixed,
+    default: () => ({ url: "", publicId: "" }),
   },
 
 }, {
   timestamps: true,
 });
 
-module.exports = mongoose.model(
-  "CheckupType",
-  checkupTypeSchema
-);
+// Auto-generate slug before validation if not provided
+checkupTypeSchema.pre("validate", function () {
+  if (this.title && !this.slug) {
+    this.slug = this.title
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, "-")
+      .replace(/[^\w-]+/g, "");
+  }
+});
+
+module.exports =
+  mongoose.models.CheckupType ||
+  mongoose.model("CheckupType", checkupTypeSchema);
