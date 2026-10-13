@@ -419,11 +419,20 @@ const razorpay = new Razorpay({
 exports.createMedicineOrder = async (req, res) => {
   try {
     const {
+      user: bodyUser,
       items,
       totalAmount,
       paymentMethod,
       deliveryAddress,
     } = req.body;
+
+    const userId = req.user?._id || bodyUser;
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID is required",
+      });
+    }
 
     if (!items || items.length === 0) {
       return res.status(400).json({
@@ -439,30 +448,46 @@ exports.createMedicineOrder = async (req, res) => {
       });
     }
 
+    // Format items to ensure canonical keys
+    const formattedItems = items.map((it) => {
+      const qty = Number(it.quantity) || 1;
+      const prc = Number(it.price) || 0;
+      const total = Number(it.totalPrice) || qty * prc;
+      return {
+        product: it.product || it.productId || it._id,
+        name: it.name || "Medicine",
+        image: it.image || "",
+        quantity: qty,
+        price: prc,
+        totalPrice: total,
+      };
+    });
+
+    const parsedTotal =
+      Number(totalAmount) ||
+      formattedItems.reduce((acc, curr) => acc + curr.totalPrice, 0);
+
     // ==========================================
     // COD ORDER
     // ==========================================
 
     if (paymentMethod === "COD") {
       const order = await MedicineOrder.create({
-        user: req.user._id,
-        items,
-        totalAmount,
+        user: userId,
+        items: formattedItems,
+        totalAmount: parsedTotal,
         paymentMethod: "COD",
         paymentStatus: "PENDING",
-
         deliveryAddress,
-
         orderStatus: "PLACED",
-
         pharmacyStatus: "Pending",
-
         deliveryStatus: "Pending",
       });
 
       return res.status(201).json({
         success: true,
         message: "COD Order Placed Successfully",
+        order,
         data: order,
       });
     }
@@ -472,60 +497,40 @@ exports.createMedicineOrder = async (req, res) => {
     // ==========================================
 
     if (paymentMethod === "WALLET") {
-
       await debitWallet({
-
-        userId: req.user._id,
-
-        amount: totalAmount,
-
+        userId,
+        amount: parsedTotal,
         title: "Medicine Order",
-
         subtitle: "Wallet Payment",
       });
 
-      await creditWallet({
-
-        userId: process.env.ADMIN_ID,
-
-        amount: totalAmount,
-
-        title: "Medicine Sale",
-
-        subtitle: "Wallet Received",
-      });
+      if (process.env.ADMIN_ID) {
+        await creditWallet({
+          userId: process.env.ADMIN_ID,
+          amount: parsedTotal,
+          title: "Medicine Sale",
+          subtitle: "Wallet Received",
+        });
+      }
 
       const order = await MedicineOrder.create({
-
-        user: req.user._id,
-
-        items,
-
-        totalAmount,
-
+        user: userId,
+        items: formattedItems,
+        totalAmount: parsedTotal,
         paymentMethod: "WALLET",
-
         paymentStatus: "PAID",
-
         deliveryAddress,
-
         orderStatus: "CONFIRMED",
-
         pharmacyStatus: "Accepted",
-
         deliveryStatus: "Pending",
-
         acceptedAt: new Date(),
-
         paidAt: new Date(),
       });
 
       return res.status(201).json({
-
         success: true,
-
         message: "Wallet Payment Successful",
-
+        order,
         data: order,
       });
     }
@@ -534,63 +539,38 @@ exports.createMedicineOrder = async (req, res) => {
     // ONLINE PAYMENT
     // ==========================================
 
-    const razorpayOrder =
-      await razorpay.orders.create({
+    const razorpayOrder = await razorpay.orders.create({
+      amount: Math.round(parsedTotal * 100),
+      currency: "INR",
+      receipt: `MED-${Date.now()}`,
+    });
 
-        amount: totalAmount * 100,
-
-        currency: "INR",
-
-        receipt: `MED-${Date.now()}`,
-      });
-
-    const order =
-      await MedicineOrder.create({
-
-        user: req.user._id,
-
-        items,
-
-        totalAmount,
-
-        paymentMethod: "ONLINE",
-
-        paymentStatus: "PENDING",
-
-        deliveryAddress,
-
-        razorpayOrderId:
-          razorpayOrder.id,
-
-        orderStatus: "PLACED",
-
-        pharmacyStatus: "Pending",
-
-        deliveryStatus: "Pending",
-      });
+    const order = await MedicineOrder.create({
+      user: userId,
+      items: formattedItems,
+      totalAmount: parsedTotal,
+      paymentMethod: "ONLINE",
+      paymentStatus: "PENDING",
+      deliveryAddress,
+      razorpayOrderId: razorpayOrder.id,
+      orderStatus: "PLACED",
+      pharmacyStatus: "Pending",
+      deliveryStatus: "Pending",
+    });
 
     return res.status(201).json({
-
       success: true,
-
       message: "Razorpay Order Created",
-
+      order,
       data: order,
-
       razorpayOrder,
     });
-
   } catch (error) {
-
     return res.status(500).json({
-
       success: false,
-
       message: error.message,
     });
-
   }
-
 };
 
 // ==========================================
@@ -598,143 +578,95 @@ exports.createMedicineOrder = async (req, res) => {
 // ==========================================
 
 exports.verifyMedicinePayment = async (req, res) => {
-
   try {
-
     const {
-
       orderId,
-
       razorpay_order_id,
-
       razorpay_payment_id,
-
       razorpay_signature,
-
     } = req.body;
 
-    const body =
-      razorpay_order_id +
-      "|" +
-      razorpay_payment_id;
+    const targetOrderId = orderId || req.body.order_id;
 
-    const expected =
-      crypto
-        .createHmac(
-          "sha256",
-          process.env.RAZORPAY_KEY_SECRET
-        )
-        .update(body)
-        .digest("hex");
+    const body = razorpay_order_id + "|" + razorpay_payment_id;
 
-    if (
-      expected !==
-      razorpay_signature
-    ) {
+    const expected = crypto
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+      .update(body)
+      .digest("hex");
 
+    if (expected !== razorpay_signature) {
       return res.status(400).json({
-
         success: false,
-
-        message:
-          "Invalid Payment Signature",
+        message: "Invalid Payment Signature",
       });
-
     }
 
-    const order =
-      await MedicineOrder.findByIdAndUpdate(
+    let filter = {};
+    if (targetOrderId && mongoose.Types.ObjectId.isValid(targetOrderId)) {
+      filter._id = targetOrderId;
+    } else if (razorpay_order_id) {
+      filter.razorpayOrderId = razorpay_order_id;
+    }
 
-        orderId,
+    const order = await MedicineOrder.findOneAndUpdate(
+      filter,
+      {
+        razorpayPaymentId: razorpay_payment_id,
+        razorpaySignature: razorpay_signature,
+        paymentStatus: "PAID",
+        orderStatus: "CONFIRMED",
+        pharmacyStatus: "Accepted",
+        acceptedAt: new Date(),
+        paidAt: new Date(),
+      },
+      {
+        new: true,
+      }
+    );
 
-        {
-
-          razorpayPaymentId:
-            razorpay_payment_id,
-
-          razorpaySignature:
-            razorpay_signature,
-
-          paymentStatus:
-            "PAID",
-
-          orderStatus:
-            "CONFIRMED",
-
-          pharmacyStatus:
-            "Accepted",
-
-          acceptedAt:
-            new Date(),
-
-          paidAt:
-            new Date(),
-        },
-
-        {
-
-          new: true,
-        }
-
-      );
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found to verify",
+      });
+    }
 
     return res.status(200).json({
-
       success: true,
-
-      message:
-        "Payment Verified Successfully",
-
+      message: "Payment verified successfully",
+      order,
       data: order,
     });
-
   } catch (error) {
-
     return res.status(500).json({
-
       success: false,
-
-      message:
-        error.message,
+      message: error.message,
     });
-
   }
+};
 
-};// ==========================================
+// ==========================================
 // GET ALL MEDICINE ORDERS (ADMIN)
 // ==========================================
 
 exports.getAllMedicineOrders = async (req, res) => {
   try {
-
     const orders = await MedicineOrder.find()
-
       .populate("user", "name email phone")
-
       .populate("rider", "name phone")
-
       .sort({ createdAt: -1 });
 
     res.status(200).json({
-
       success: true,
-
       count: orders.length,
-
       data: orders,
-
     });
-
   } catch (error) {
-
     res.status(500).json({
-
       success: false,
-
       message: error.message,
-
     });
-
   }
 };
 
@@ -743,89 +675,121 @@ exports.getAllMedicineOrders = async (req, res) => {
 // ==========================================
 
 exports.getMyMedicineOrders = async (req, res) => {
-
   try {
-
     const orders = await MedicineOrder.find({
-
       user: req.user._id,
-
     })
-
       .populate("rider", "name phone")
-
       .sort({ createdAt: -1 });
 
     res.status(200).json({
-
       success: true,
-
       count: orders.length,
-
       data: orders,
-
     });
-
   } catch (error) {
-
     res.status(500).json({
-
       success: false,
-
       message: error.message,
-
     });
-
   }
-
 };
 
 // ==========================================
-// GET SINGLE ORDER
+// GET SINGLE ORDER / USER ORDERS
+// (Supports GET /medicine-orders/:userId & :orderId)
 // ==========================================
 
 exports.getSingleMedicineOrder = async (req, res) => {
-
   try {
+    const { id } = req.params;
 
-    const order = await MedicineOrder.findById(req.params.id)
-
-      .populate("user", "name email phone")
-
-      .populate("rider", "name phone");
-
-    if (!order) {
-
-      return res.status(404).json({
-
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
         success: false,
-
-        message: "Order not found",
-
+        message: "Invalid ID format",
       });
-
     }
 
-    res.status(200).json({
+    // Check if ID is a user in User collection
+    const User = require("../models/userModel");
+    const isUser = await User.exists({ _id: id });
 
-      success: true,
+    if (isUser) {
+      const orders = await MedicineOrder.find({ user: id })
+        .populate("user", "name email phone")
+        .populate("rider", "name phone")
+        .sort({ createdAt: -1 });
 
-      data: order,
+      return res.status(200).json({
+        success: true,
+        count: orders.length,
+        data: orders,
+      });
+    }
 
-    });
+    // Otherwise check for single order by _id
+    const order = await MedicineOrder.findById(id)
+      .populate("user", "name email phone")
+      .populate("rider", "name phone");
 
-  } catch (error) {
+    if (order) {
+      return res.status(200).json({
+        success: true,
+        data: order,
+        order,
+      });
+    }
 
-    res.status(500).json({
+    // If order not found, check if any orders exist for this user ID
+    const userOrders = await MedicineOrder.find({ user: id })
+      .populate("user", "name email phone")
+      .populate("rider", "name phone")
+      .sort({ createdAt: -1 });
 
+    if (userOrders.length > 0) {
+      return res.status(200).json({
+        success: true,
+        count: userOrders.length,
+        data: userOrders,
+      });
+    }
+
+    return res.status(404).json({
       success: false,
-
-      message: error.message,
-
+      message: "Order not found",
     });
-
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
+};
 
+// ==========================================
+// GET ORDERS BY USER ID (EXPLICIT)
+// ==========================================
+
+exports.getOrdersByUserId = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const orders = await MedicineOrder.find({ user: userId })
+      .populate("user", "name email phone")
+      .populate("rider", "name phone")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: orders.length,
+      data: orders,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
 };
 
 // ==========================================

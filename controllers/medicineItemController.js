@@ -1,846 +1,509 @@
-// const MedicineItem = require("../models/medicineItem.model");
-// const { uploadFile, deleteFile } = require("../utils/bunnyUpload");
+const mongoose = require("mongoose");
+const MedicineItem = require("../models/medicineItem.model");
+const { uploadFile, deleteFile } = require("../utils/bunnyUpload");
 
+// ============================================
+// 🛠️ HELPER: FORMAT MEDICINE ITEM
+// ============================================
+function formatMedicineItem(item) {
+  if (!item) return null;
+  const doc = item.toObject ? item.toObject() : item;
 
-// // ================= CREATE =================
-// exports.createMedicine = async (req, res) => {
-//   try {
-//     const { name, description, price } = req.body;  // ✅ REMOVED subCategory
+  const newPrice = doc.newPrice ?? doc.price ?? doc.mrp ?? 0;
+  const oldPrice =
+    doc.oldPrice ??
+    doc.originalPrice ??
+    (doc.price && doc.price > newPrice ? doc.price : newPrice);
 
-//     // 🔹 validation - ONLY name and price required
-//     if (!name || !price) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Name & price required"
-//       });
-//     }
+  let discount = doc.discount || "";
+  if (!discount && oldPrice > newPrice && oldPrice > 0 && newPrice > 0) {
+    const pct = Math.round(((oldPrice - newPrice) / oldPrice) * 100);
+    if (pct > 0) {
+      discount = `${pct}% OFF`;
+    }
+  }
 
-//     let imageData = null;
+  const imageUrl =
+    doc.imageUrl ||
+    (typeof doc.image === "string" ? doc.image : doc.image?.url || "");
+  const image =
+    doc.image ||
+    (imageUrl
+      ? { url: imageUrl, publicId: "" }
+      : { url: "", publicId: "" });
 
-//     // ✅ CASE 1: FILE (form-data)
-//     if (req.files && req.files.image && req.files.image.length > 0) {
-//       const uploadRes = await uploadFile(req.files.image[0]);
+  const subCatId = (
+    doc.subCategoryId?._id ||
+    doc.subCategoryId ||
+    doc.medicineSubCategory?._id ||
+    doc.medicineSubCategory ||
+    ""
+  ).toString();
 
-//       imageData = {
-//         url: uploadRes.url,
-//         publicId: uploadRes.publicId
-//       };
-//     }
+  const description = doc.description || doc.name || "";
+  const name = doc.name || doc.description || "";
 
-//     // ✅ CASE 2: JSON (raw body)
-//     else if (req.body.image) {
-//       let img = req.body.image;
-
-//       // agar string me aaye (kabhi form-data se)
-//       if (typeof img === "string") {
-//         try {
-//           img = JSON.parse(img);
-//         } catch (e) {}
-//       }
-
-//       if (img?.url && img?.publicId) {
-//         imageData = img;
-//       }
-//     }
-
-//     // ❌ image required
-//     if (!imageData) {
-//       return res.status(400).json({
-//         success: false,
-//         message: "Image required"
-//       });
-//     }
-
-//     const data = await MedicineItem.create({
-//       name,
-//       description: description || "",
-//       price,
-//       image: imageData
-//       // ❌ NO subCategory field here
-//     });
-
-//     res.status(201).json({
-//       success: true,
-//       data
-//     });
-
-//   } catch (err) {
-//     console.error("Create error:", err);
-//     res.status(500).json({
-//       success: false,
-//       message: err.message
-//     });
-//   }
-// };
-
-// // ================= GET ALL =================
-// exports.getMedicines = async (req, res) => {
-//   try {
-//     const page = Math.max(parseInt(req.query.page) || 1, 1);
-//     const limit = Math.max(parseInt(req.query.limit) || 10, 1);
-//     const search = req.query.search || "";
-
-//     const skip = (page - 1) * limit;
-
-//     // const query = {
-//     //   name: { $regex: search, $options: "i" }
-//     // };
-//     const query = {
-//   $or: [
-//     {
-//       name: {
-//         $regex: search,
-//         $options: "i"
-//       }
-//     },
-
-//     {
-//       productTitle: {
-//         $regex: search,
-//         $options: "i"
-//       }
-//     }
-//   ]
-// };
-
-//     const total = await MedicineItem.countDocuments(query);
-
-//     const medicines = await MedicineItem.find(query)
-//       .sort({ createdAt: -1 })
-//       .skip(skip)
-//       .limit(limit);
-
-//     const formatted = medicines.map((item) => {
-//     const oldPrice =
-//   item.price ||
-//   item.mrp ||
-//   0;
-//       const discount = Math.floor(Math.random() * 10) + 5;
-
-//       const newPrice = Math.round(
-//         oldPrice - (oldPrice * discount) / 100
-//       );
-
-//       return {
-//         id: item._id,
-//         name:
-//   item.name ||
-//   item.productTitle,
-//         description: item.description,
-//         type: "Strip of tablets",
-//         delivery: "Delivery by Tomorrow 9 PM",
-//         oldPrice,
-//         newPrice,
-//         discount: `${discount}% off`,
-//         prescription: false,
-//         imageUrl: item.image?.url || "",
-//         image: item.image
-//       };
-//     });
-
-//     res.json({
-//       success: true,
-//       page,
-//       limit,
-//       total,
-//       data: formatted
-//     });
-
-//   } catch (err) {
-//     console.error("Get all error:", err);
-//     res.status(500).json({
-//       success: false,
-//       message: err.message
-//     });
-//   }
-// };
-
-// // ================= GET BY SUBCATEGORY =================
-// // Note: This endpoint will work only if you add subCategory back to schema
-// // For now, either remove this or return empty array
-// exports.getBySubCategory = async (req, res) => {
-//   try {
-//     const { id } = req.params;
-    
-//     // Since schema has no subCategory, return empty array
-//     // Or you can remove this endpoint entirely
-//     res.json({
-//       success: true,
-//       count: 0,
-//       data: []
-//     });
-
-//   } catch (err) {
-//     console.error("Get by subcategory error:", err);
-//     res.status(500).json({
-//       success: false,
-//       message: err.message
-//     });
-//   }
-// };
-
-// // ================= GET ONE =================
-// exports.getMedicineById = async (req, res) => {
-//   try {
-//     const item = await MedicineItem.findById(req.params.id);
-
-//     if (!item) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "Medicine not found"
-//       });
-//     }
-
-//     res.json({
-//       success: true,
-//       data: item
-//     });
-
-//   } catch (err) {
-//     console.error("Get by ID error:", err);
-//     res.status(500).json({
-//       success: false,
-//       message: err.message
-//     });
-//   }
-// };
-
-// // ================= UPDATE =================
-// exports.updateMedicine = async (req, res) => {
-//   try {
-//     const item = await MedicineItem.findById(req.params.id);
-
-//     if (!item) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "Medicine not found"
-//       });
-//     }
-
-//     const { name, description, price } = req.body;  // ✅ REMOVED subCategory
-
-//     if (name) item.name = name;
-//     if (description !== undefined) item.description = description;
-//     if (price) item.price = price;
-
-//     // 🔹 image update (file)
-//     if (req.files?.image?.length > 0) {
-//       if (item.image?.publicId) {
-//         await deleteFile(item.image.publicId);
-//       }
-
-//       const uploadRes = await uploadFile(req.files.image[0]);
-
-//       item.image = {
-//         url: uploadRes.url,
-//         publicId: uploadRes.publicId
-//       };
-//     }
-
-//     // 🔹 image update (JSON)
-//     else if (req.body.image) {
-//       let img = req.body.image;
-
-//       if (typeof img === "string") {
-//         try {
-//           img = JSON.parse(img);
-//         } catch (e) {}
-//       }
-
-//       if (img?.url && img?.publicId) {
-//         if (item.image?.publicId && item.image.publicId !== img.publicId) {
-//           await deleteFile(item.image.publicId);
-//         }
-//         item.image = img;
-//       }
-//     }
-
-//     await item.save();
-
-//     res.json({
-//       success: true,
-//       data: item
-//     });
-
-//   } catch (err) {
-//     console.error("Update error:", err);
-//     res.status(500).json({
-//       success: false,
-//       message: err.message
-//     });
-//   }
-// };
-
-// // ================= DELETE =================
-// exports.deleteMedicine = async (req, res) => {
-//   try {
-//     const item = await MedicineItem.findById(req.params.id);
-
-//     if (!item) {
-//       return res.status(404).json({
-//         success: false,
-//         message: "Medicine not found"
-//       });
-//     }
-
-//     if (item.image?.publicId) {
-//       await deleteFile(item.image.publicId);
-//     }
-
-//     await item.deleteOne();
-
-//     res.json({
-//       success: true,
-//       message: "Medicine deleted successfully"
-//     });
-
-//   } catch (err) {
-//     console.error("Delete error:", err);
-//     res.status(500).json({
-//       success: false,
-//       message: err.message
-//     });
-//   }
-// };
-
-
-
-const MedicineItem = require(
-  "../models/medicineItem.model"
-);
-
-const {
-  uploadFile,
-  deleteFile
-} = require("../utils/bunnyUpload");
-
+  return {
+    _id: doc._id?.toString() || "",
+    id: doc._id?.toString() || "",
+    name,
+    description,
+    type: doc.type || "Strip of tablets",
+    delivery: doc.delivery || "Delivery by Tomorrow 9 PM",
+    newPrice,
+    oldPrice,
+    price: newPrice,
+    mrp: oldPrice,
+    originalPrice: oldPrice,
+    discount,
+    prescription: Boolean(doc.prescription),
+    imageUrl,
+    image,
+    subCategoryId: subCatId,
+    medicineSubCategory: doc.medicineSubCategory || subCatId,
+    medicineItems: Array.isArray(doc.medicineItems) ? doc.medicineItems : [],
+    quantity: typeof doc.quantity === "number" ? doc.quantity : 1,
+    stock: doc.stock !== undefined ? doc.stock : null,
+    isActive: doc.isActive !== undefined ? doc.isActive : true,
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
+  };
+}
 
 // ============================================
 // ✅ CREATE MEDICINE
 // ============================================
-exports.createMedicine =
-  async (req, res) => {
-    try {
+exports.createMedicine = async (req, res) => {
+  try {
+    const {
+      medicineCategory,
+      medicineSubCategory,
+      subCategoryId,
+      name,
+      description,
+      type,
+      delivery,
+      price,
+      newPrice,
+      oldPrice,
+      mrp,
+      originalPrice,
+      discount,
+      prescription,
+      imageUrl,
+      medicineItems,
+      quantity,
+      stock,
+      isActive,
+    } = req.body;
 
-      // const {
-      //   medicineCategory,
-      //   name,
-      //   description,
-      //   price
-      // } = req.body;
+    const targetSubCategory = medicineSubCategory || subCategoryId;
+    const displayName = (name || description || "").trim();
+    const sellingPrice = Number(newPrice ?? price ?? mrp ?? 0);
+    const regularPrice = Number(oldPrice ?? originalPrice ?? sellingPrice);
 
-      // // ✅ VALIDATION
-      // if (
-      //   !medicineCategory ||
-      //   !name ||
-      //   !price
-      // ) {
-      //   return res.status(400).json({
-      //     success: false,
-      //     message:
-      //       "medicineCategory, name & price required"
-      //   });
-      // }
-      
-const {
-  medicineSubCategory,
-  name,
-  description,
-  price
-} = req.body;
-
-
-// ✅ VALIDATION
-if (
-  !medicineSubCategory ||
-  !name ||
-  !price
-) {
-  return res.status(400).json({
-    success: false,
-    message:
-      "medicineSubCategory, name & price required"
-  });
-}
-
-
-
-      let imageData = null;
-
-      // ============================================
-      // ✅ IMAGE FROM FILE
-      // ============================================
-      if (
-        req.files &&
-        req.files.image &&
-        req.files.image.length > 0
-      ) {
-
-        const uploadRes =
-          await uploadFile(
-            req.files.image[0]
-          );
-
-        imageData = {
-          url: uploadRes.url,
-          publicId: uploadRes.publicId
-        };
-      }
-
-      // ============================================
-      // ✅ IMAGE FROM JSON
-      // ============================================
-      else if (req.body.image) {
-
-        let img = req.body.image;
-
-        if (typeof img === "string") {
-          try {
-            img = JSON.parse(img);
-          } catch (e) {}
-        }
-
-        if (
-          img?.url &&
-          img?.publicId
-        ) {
-          imageData = img;
-        }
-      }
-
-      // ✅ IMAGE REQUIRED
-if (!imageData) {
-
-  imageData = {
-    url: "",
-    publicId: ""
-  };
-
-}
-
-
-
-      // ============================================
-      // ✅ CREATE
-      // ============================================
-      const data =
-        await MedicineItem.create({
-         medicineSubCategory,
-          name,
-          description:
-            description || "",
-          price,
-          image: imageData
-        });
-
-      res.status(201).json({
-        success: true,
-        message:
-          "Medicine created successfully",
-        data
-      });
-
-    } catch (err) {
-
-      console.error(
-        "CREATE MEDICINE ERROR:",
-        err
-      );
-
-      res.status(500).json({
+    if (!displayName) {
+      return res.status(400).json({
         success: false,
-        message: err.message
+        message: "Medicine name or description is required",
       });
     }
-  };
 
+    if (sellingPrice < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid price is required",
+      });
+    }
 
+    let imageData = null;
+
+    // Image from file upload
+    if (req.files && req.files.image && req.files.image.length > 0) {
+      const uploadRes = await uploadFile(req.files.image[0]);
+      imageData = {
+        url: uploadRes.url,
+        publicId: uploadRes.publicId,
+      };
+    } else if (req.body.image) {
+      let img = req.body.image;
+      if (typeof img === "string") {
+        try {
+          img = JSON.parse(img);
+        } catch (e) {
+          // plain string URL
+          img = { url: img, publicId: "" };
+        }
+      }
+      if (img?.url) {
+        imageData = img;
+      }
+    } else if (imageUrl) {
+      imageData = { url: imageUrl, publicId: "" };
+    }
+
+    if (!imageData) {
+      imageData = { url: "", publicId: "" };
+    }
+
+    let itemsArray = [];
+    if (medicineItems) {
+      itemsArray = Array.isArray(medicineItems)
+        ? medicineItems
+        : [medicineItems];
+    }
+
+    let calculatedDiscount = discount || "";
+    if (
+      !calculatedDiscount &&
+      regularPrice > sellingPrice &&
+      regularPrice > 0 &&
+      sellingPrice > 0
+    ) {
+      const pct = Math.round(
+        ((regularPrice - sellingPrice) / regularPrice) * 100
+      );
+      if (pct > 0) {
+        calculatedDiscount = `${pct}% OFF`;
+      }
+    }
+
+    const data = await MedicineItem.create({
+      medicineCategory: medicineCategory || null,
+      medicineSubCategory: targetSubCategory || null,
+      subCategoryId: targetSubCategory ? targetSubCategory.toString() : "",
+      name: displayName,
+      description: description || displayName,
+      type: type || "Strip of tablets",
+      delivery: delivery || "Delivery by Tomorrow 9 PM",
+      newPrice: sellingPrice,
+      oldPrice: regularPrice,
+      price: sellingPrice,
+      mrp: regularPrice,
+      discount: calculatedDiscount,
+      prescription: Boolean(prescription),
+      imageUrl: imageData.url || imageUrl || "",
+      image: imageData,
+      medicineItems: itemsArray,
+      quantity: Number(quantity) || 1,
+      stock: stock !== undefined && stock !== null ? Number(stock) : null,
+      isActive: isActive !== undefined ? isActive : true,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Medicine created successfully",
+      data: formatMedicineItem(data),
+    });
+  } catch (err) {
+    console.error("CREATE MEDICINE ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
 
 // ============================================
 // ✅ GET ALL MEDICINES
 // ============================================
-exports.getMedicines =
-  async (req, res) => {
-    try {
+exports.getMedicines = async (req, res) => {
+  try {
+    const search = req.query.search || "";
+    const medicineCategory = req.query.medicineCategory || "";
+    const subCategoryId =
+      req.query.subCategoryId || req.query.medicineSubCategory || "";
 
-      const page =
-        parseInt(req.query.page) || 1;
+    const query = {
+      isActive: true,
+    };
 
-      const limit =
-        parseInt(req.query.limit) || 10;
-
-      const search =
-        req.query.search || "";
-
-      const medicineCategory =
-        req.query.medicineCategory || "";
-
-      const skip =
-        (page - 1) * limit;
-
-      // ============================================
-      // ✅ FILTER QUERY
-      // ============================================
-      let query = {
-        isActive: true
-      };
-
-      // ✅ SEARCH
-      if (search) {
-        query.name = {
-          $regex: search,
-          $options: "i"
-        };
-      }
-
-      // ✅ CATEGORY FILTER
-      if (medicineCategory) {
-        query.medicineCategory =
-          medicineCategory;
-      }
-
-      // ============================================
-      // ✅ TOTAL
-      // ============================================
-      const total =
-        await MedicineItem.countDocuments(
-          query
-        );
-
-      // ============================================
-      // ✅ GET DATA
-      // ============================================
-      const medicines =
-        await MedicineItem.find(query)
-
-       
-.populate(
-  "medicineSubCategory",
-  "title"
-)
-
-
-
-          .sort({
-            createdAt: -1
-          })
-
-          .skip(skip)
-
-          .limit(limit);
-
-      res.json({
-        success: true,
-        page,
-        limit,
-        total,
-        data: medicines
-      });
-
-    } catch (err) {
-
-      console.error(
-        "GET MEDICINES ERROR:",
-        err
-      );
-
-      res.status(500).json({
-        success: false,
-        message: err.message
-      });
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: "i" } },
+        { description: { $regex: search, $options: "i" } },
+      ];
     }
-  };
 
+    if (medicineCategory) {
+      query.medicineCategory = medicineCategory;
+    }
 
+    if (subCategoryId) {
+      query.$or = query.$or || [];
+      query.$and = [
+        {
+          $or: [
+            { medicineSubCategory: subCategoryId },
+            { subCategoryId: subCategoryId },
+          ],
+        },
+      ];
+    }
+
+    const hasLimit = Boolean(req.query.limit);
+    const hasPage = Boolean(req.query.page);
+
+    const total = await MedicineItem.countDocuments(query);
+
+    let findQuery = MedicineItem.find(query)
+      .populate("medicineSubCategory", "title name")
+      .sort({ createdAt: -1 });
+
+    let page = 1;
+    let limit = total;
+
+    if (hasLimit || hasPage) {
+      page = Math.max(parseInt(req.query.page) || 1, 1);
+      limit = Math.max(parseInt(req.query.limit) || 10, 1);
+      const skip = (page - 1) * limit;
+      findQuery = findQuery.skip(skip).limit(limit);
+    }
+
+    const medicines = await findQuery;
+    const formatted = medicines.map(formatMedicineItem);
+
+    res.json({
+      success: true,
+      page,
+      limit,
+      total,
+      data: formatted,
+    });
+  } catch (err) {
+    console.error("GET MEDICINES ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
 
 // ============================================
 // ✅ GET MEDICINES BY SUB CATEGORY
 // ============================================
-exports.getBySubCategory =
-  async (req, res) => {
-    try {
+exports.getBySubCategory = async (req, res) => {
+  try {
+    const subCatId = req.params.id;
 
-      const medicines =
-      
-await MedicineItem.find({
-  medicineSubCategory:
-    req.params.id,
-
-  isActive: true
-})
-
-
-
-          .populate(
-            "medicineCategory",
-            "title"
-          )
-
-          .sort({
-            createdAt: -1
-          });
-
-      res.json({
-        success: true,
-        count: medicines.length,
-        data: medicines
+    const medicines = await MedicineItem.find({
+      $or: [
+        { medicineSubCategory: subCatId },
+        { subCategoryId: subCatId },
+      ],
+      isActive: true,
+    })
+      .populate("medicineSubCategory", "title name")
+      .sort({
+        createdAt: -1,
       });
 
-    } catch (err) {
+    const formatted = medicines.map(formatMedicineItem);
 
-      console.error(
-        "GET BY SUBCATEGORY ERROR:",
-        err
-      );
-
-      res.status(500).json({
-        success: false,
-        message: err.message
-      });
-    }
-  };
-
-
+    res.json({
+      success: true,
+      count: formatted.length,
+      data: formatted,
+    });
+  } catch (err) {
+    console.error("GET BY SUBCATEGORY ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
 
 // ============================================
-// ✅ GET SINGLE MEDICINE
+// ✅ GET SINGLE MEDICINE (GET /medicine-item/:id)
 // ============================================
-exports.getMedicineById =
-  async (req, res) => {
-    try {
+exports.getMedicineById = async (req, res) => {
+  try {
+    const medicine = await MedicineItem.findById(req.params.id).populate(
+      "medicineSubCategory",
+      "title name"
+    );
 
-      const medicine =
-        await MedicineItem.findById(
-          req.params.id
-        )
-
-          .populate(
-            "medicineCategory",
-            "title"
-          );
-
-      if (!medicine) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "Medicine not found"
-        });
-      }
-
-      res.json({
-        success: true,
-        data: medicine
-      });
-
-    } catch (err) {
-
-      console.error(
-        "GET MEDICINE ERROR:",
-        err
-      );
-
-      res.status(500).json({
+    if (!medicine) {
+      return res.status(404).json({
         success: false,
-        message: err.message
+        message: "Medicine not found",
       });
     }
-  };
 
+    const formatted = formatMedicineItem(medicine);
 
+    res.json({
+      success: true,
+      data: formatted,
+      page: 1,
+      limit: 10,
+      total: 1,
+    });
+  } catch (err) {
+    console.error("GET MEDICINE ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
 
 // ============================================
 // ✅ UPDATE MEDICINE
 // ============================================
-exports.updateMedicine =
-  async (req, res) => {
-    try {
+exports.updateMedicine = async (req, res) => {
+  try {
+    const medicine = await MedicineItem.findById(req.params.id);
 
-      const medicine =
-        await MedicineItem.findById(
-          req.params.id
-        );
-
-      if (!medicine) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "Medicine not found"
-        });
-      }
-
-      const {
-        medicineCategory,
-        name,
-        description,
-        price,
-        isActive
-      } = req.body;
-
-      // ✅ UPDATE FIELDS
-      if (medicineCategory) {
-        medicine.medicineCategory =
-          medicineCategory;
-      }
-
-      if (name) {
-        medicine.name = name;
-      }
-
-      if (
-        description !== undefined
-      ) {
-        medicine.description =
-          description;
-      }
-
-      if (price) {
-        medicine.price = price;
-      }
-
-      if (
-        isActive !== undefined
-      ) {
-        medicine.isActive =
-          isActive;
-      }
-
-      // ============================================
-      // ✅ IMAGE UPDATE FROM FILE
-      // ============================================
-      if (
-        req.files?.image?.length > 0
-      ) {
-
-        // delete old image
-        if (
-          medicine.image?.publicId
-        ) {
-          await deleteFile(
-            medicine.image.publicId
-          );
-        }
-
-        const uploadRes =
-          await uploadFile(
-            req.files.image[0]
-          );
-
-        medicine.image = {
-          url: uploadRes.url,
-          publicId:
-            uploadRes.publicId
-        };
-      }
-
-      // ============================================
-      // ✅ IMAGE UPDATE FROM JSON
-      // ============================================
-      else if (req.body.image) {
-
-        let img = req.body.image;
-
-        if (typeof img === "string") {
-          try {
-            img = JSON.parse(img);
-          } catch (e) {}
-        }
-
-        if (
-          img?.url &&
-          img?.publicId
-        ) {
-
-          if (
-            medicine.image?.publicId &&
-            medicine.image.publicId !==
-              img.publicId
-          ) {
-            await deleteFile(
-              medicine.image.publicId
-            );
-          }
-
-          medicine.image = img;
-        }
-      }
-
-      // ============================================
-      // ✅ SAVE
-      // ============================================
-      await medicine.save();
-
-      res.json({
-        success: true,
-        message:
-          "Medicine updated successfully",
-        data: medicine
-      });
-
-    } catch (err) {
-
-      console.error(
-        "UPDATE MEDICINE ERROR:",
-        err
-      );
-
-      res.status(500).json({
+    if (!medicine) {
+      return res.status(404).json({
         success: false,
-        message: err.message
+        message: "Medicine not found",
       });
     }
-  };
 
+    const {
+      medicineCategory,
+      medicineSubCategory,
+      subCategoryId,
+      name,
+      description,
+      type,
+      delivery,
+      price,
+      newPrice,
+      oldPrice,
+      mrp,
+      originalPrice,
+      discount,
+      prescription,
+      imageUrl,
+      medicineItems,
+      quantity,
+      stock,
+      isActive,
+    } = req.body;
 
+    if (medicineCategory !== undefined) medicine.medicineCategory = medicineCategory;
+    if (medicineSubCategory !== undefined || subCategoryId !== undefined) {
+      const targetSub = medicineSubCategory || subCategoryId;
+      medicine.medicineSubCategory = targetSub;
+      medicine.subCategoryId = targetSub ? targetSub.toString() : "";
+    }
+
+    if (name !== undefined) medicine.name = name;
+    if (description !== undefined) medicine.description = description;
+    if (type !== undefined) medicine.type = type;
+    if (delivery !== undefined) medicine.delivery = delivery;
+
+    if (newPrice !== undefined || price !== undefined) {
+      const p = Number(newPrice ?? price);
+      medicine.newPrice = p;
+      medicine.price = p;
+    }
+
+    if (oldPrice !== undefined || mrp !== undefined || originalPrice !== undefined) {
+      const op = Number(oldPrice ?? mrp ?? originalPrice);
+      medicine.oldPrice = op;
+      medicine.mrp = op;
+    }
+
+    if (discount !== undefined) {
+      medicine.discount = discount;
+    } else if (medicine.oldPrice > medicine.newPrice && medicine.newPrice > 0) {
+      const pct = Math.round(
+        ((medicine.oldPrice - medicine.newPrice) / medicine.oldPrice) * 100
+      );
+      if (pct > 0) medicine.discount = `${pct}% OFF`;
+    }
+
+    if (prescription !== undefined) medicine.prescription = Boolean(prescription);
+    if (quantity !== undefined) medicine.quantity = Number(quantity);
+    if (stock !== undefined) {
+      medicine.stock = stock !== null ? Number(stock) : null;
+    }
+    if (medicineItems !== undefined) {
+      medicine.medicineItems = Array.isArray(medicineItems)
+        ? medicineItems
+        : [medicineItems];
+    }
+    if (isActive !== undefined) medicine.isActive = Boolean(isActive);
+
+    // Image update from file
+    if (req.files?.image?.length > 0) {
+      if (medicine.image?.publicId) {
+        await deleteFile(medicine.image.publicId);
+      }
+      const uploadRes = await uploadFile(req.files.image[0]);
+      medicine.image = {
+        url: uploadRes.url,
+        publicId: uploadRes.publicId,
+      };
+      medicine.imageUrl = uploadRes.url;
+    } else if (req.body.image) {
+      let img = req.body.image;
+      if (typeof img === "string") {
+        try {
+          img = JSON.parse(img);
+        } catch (e) {
+          img = { url: img, publicId: "" };
+        }
+      }
+      if (img?.url) {
+        medicine.image = img;
+        medicine.imageUrl = img.url;
+      }
+    } else if (imageUrl) {
+      medicine.imageUrl = imageUrl;
+      medicine.image = { url: imageUrl, publicId: "" };
+    }
+
+    await medicine.save();
+
+    res.json({
+      success: true,
+      message: "Medicine updated successfully",
+      data: formatMedicineItem(medicine),
+    });
+  } catch (err) {
+    console.error("UPDATE MEDICINE ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};
 
 // ============================================
 // ✅ DELETE MEDICINE
 // ============================================
-exports.deleteMedicine =
-  async (req, res) => {
-    try {
+exports.deleteMedicine = async (req, res) => {
+  try {
+    const medicine = await MedicineItem.findById(req.params.id);
 
-      const medicine =
-        await MedicineItem.findById(
-          req.params.id
-        );
-
-      if (!medicine) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "Medicine not found"
-        });
-      }
-
-      // ✅ DELETE IMAGE
-      if (
-        medicine.image?.publicId
-      ) {
-        await deleteFile(
-          medicine.image.publicId
-        );
-      }
-
-      // ✅ DELETE DOCUMENT
-      await medicine.deleteOne();
-
-      res.json({
-        success: true,
-        message:
-          "Medicine deleted successfully"
-      });
-
-    } catch (err) {
-
-      console.error(
-        "DELETE MEDICINE ERROR:",
-        err
-      );
-
-      res.status(500).json({
+    if (!medicine) {
+      return res.status(404).json({
         success: false,
-        message: err.message
+        message: "Medicine not found",
       });
     }
-  };
 
+    if (medicine.image?.publicId) {
+      await deleteFile(medicine.image.publicId);
+    }
+
+    await medicine.deleteOne();
+
+    res.json({
+      success: true,
+      message: "Medicine deleted successfully",
+    });
+  } catch (err) {
+    console.error("DELETE MEDICINE ERROR:", err);
+    res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+  }
+};

@@ -135,7 +135,7 @@ const orderItemSchema = new mongoose.Schema(
   {
     product: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Medicine",
+      ref: "MedicineItem",
       required: true,
     },
 
@@ -166,7 +166,7 @@ const orderItemSchema = new mongoose.Schema(
     },
   },
   {
-    _id: false,
+    _id: true,
   }
 );
 
@@ -348,7 +348,6 @@ const medicineOrderSchema = new mongoose.Schema(
   }
 );
 
-module.exports = mongoose.model(
-  "MedicineOrder",
-  medicineOrderSchema
-);
+module.exports =
+  mongoose.models.MedicineOrder ||
+  mongoose.model("MedicineOrder", medicineOrderSchema);

@@ -371,25 +371,25 @@ app.use(
 //   require("./routes/medicineItemRoutes")
 // );
 
-app.use(
-  "/api/labCategories",
-  require("./routes/labCategoryRoutes")
-);
+const labCategoryRoutes = require("./routes/labCategoryRoutes");
+app.use("/api/labCategories", labCategoryRoutes);
+app.use("/api/lab-categories", labCategoryRoutes);
+app.use("/api/labcategories", labCategoryRoutes);
 
 app.use(
   "/api/surgery-categories",
   require("./routes/surgeryCategoryRoutes")
 );
 
-app.use(
-  "/api/lab-tests",
-  require("./routes/labTestRoutes")
-);
+const labTestRoutes = require("./routes/labTestRoutes");
+app.use("/api/lab-tests", labTestRoutes);
+app.use("/api/labtests", labTestRoutes);
+app.use("/api/lab-test", labTestRoutes);
 
-app.use(
-  "/api/checkup-types",
-  require("./routes/checkupTypeRoutes")
-);
+const checkupTypeRoutes = require("./routes/checkupTypeRoutes");
+app.use("/api/checkup-types", checkupTypeRoutes);
+app.use("/api/checkuptypes", checkupTypeRoutes);
+app.use("/api/checkup-type", checkupTypeRoutes);
 
 app.use(
   "/api/pet-categories",
@@ -439,6 +439,12 @@ app.use(
     "./routes/medicineItemRoutes"
   )
 );
+app.use(
+  "/api/medicine-item",
+  require(
+    "./routes/medicineItemRoutes"
+  )
+);
 
 app.use(
   "/api/featured-services",
@@ -465,10 +471,10 @@ app.use(
   require("./routes/medicineOrderRoutes")
 );
 
-app.use(
-  "/api/lab-bookings",
-  require("./routes/labBookingRoutes")
-);
+const labBookingRoutes = require("./routes/labBookingRoutes");
+app.use("/api/lab-bookings", labBookingRoutes);
+app.use("/api/labbookings", labBookingRoutes);
+app.use("/api/lab-booking", labBookingRoutes);
 
 app.use(
   "/api/pet-orders",

@@ -1,6 +1,32 @@
 const LabCategory = require("../models/LabCategoryModel");
 const { uploadFile, deleteFile } = require("../utils/bunnyUpload");
 
+// Helper to format lab category to match frontend documentation
+const formatLabCategory = (item) => {
+  if (!item) return null;
+  const doc = item.toObject ? item.toObject() : { ...item };
+
+  let image = doc.image;
+  if (!image) {
+    image = { url: "", publicId: "" };
+  } else if (typeof image === "string") {
+    image = { url: image, publicId: "" };
+  } else if (typeof image === "object") {
+    image = {
+      url: image.url || "",
+      publicId: image.publicId || "",
+    };
+  }
+
+  return {
+    _id: doc._id ? doc._id.toString() : "",
+    name: doc.name || "",
+    image,
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
+  };
+};
+
 // ================= CREATE =================
 exports.createLabCategory = async (req, res) => {
   try {
@@ -13,24 +39,26 @@ exports.createLabCategory = async (req, res) => {
       });
     }
 
-    let imageData = null;
+    let imageData = { url: "", publicId: "" };
 
     // ✅ IMAGE (file upload)
     if (req.files && req.files.image && req.files.image.length > 0) {
       const uploadRes = await uploadFile(req.files.image[0]);
-
       imageData = {
         url: uploadRes.url,
         publicId: uploadRes.publicId,
       };
-    }
-
-    // ❌ image required
-    if (!imageData) {
-      return res.status(400).json({
-        success: false,
-        message: "Image required",
-      });
+    } else if (req.body.image) {
+      if (typeof req.body.image === "string") {
+        imageData = { url: req.body.image, publicId: "" };
+      } else if (typeof req.body.image === "object") {
+        imageData = {
+          url: req.body.image.url || "",
+          publicId: req.body.image.publicId || "",
+        };
+      }
+    } else if (req.body.imageUrl) {
+      imageData = { url: req.body.imageUrl, publicId: "" };
     }
 
     const category = await LabCategory.create({
@@ -40,7 +68,8 @@ exports.createLabCategory = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      data: category,
+      message: "Lab category created successfully",
+      data: formatLabCategory(category),
     });
   } catch (err) {
     console.log("CREATE ERROR:", err);
@@ -56,10 +85,12 @@ exports.getLabCategories = async (req, res) => {
   try {
     const data = await LabCategory.find().sort({ createdAt: -1 });
 
+    const formattedData = data.map(formatLabCategory);
+
     res.json({
       success: true,
-      count: data.length,
-      data,
+      count: formattedData.length,
+      data: formattedData,
     });
   } catch (err) {
     console.log("GET ERROR:", err);
@@ -84,7 +115,7 @@ exports.getLabCategoryById = async (req, res) => {
 
     res.json({
       success: true,
-      data: item,
+      data: formatLabCategory(item),
     });
   } catch (err) {
     console.log("GET ONE ERROR:", err);
@@ -113,7 +144,7 @@ exports.updateLabCategory = async (req, res) => {
 
     // ✅ IMAGE UPDATE
     if (req.files && req.files.image && req.files.image.length > 0) {
-      // 🔥 old image delete
+      // old image delete
       if (item.image?.publicId) {
         await deleteFile(item.image.publicId);
       }
@@ -124,13 +155,25 @@ exports.updateLabCategory = async (req, res) => {
         url: uploadRes.url,
         publicId: uploadRes.publicId,
       };
+    } else if (req.body.image) {
+      if (typeof req.body.image === "string") {
+        item.image = { url: req.body.image, publicId: "" };
+      } else if (typeof req.body.image === "object") {
+        item.image = {
+          url: req.body.image.url || "",
+          publicId: req.body.image.publicId || "",
+        };
+      }
+    } else if (req.body.imageUrl) {
+      item.image = { url: req.body.imageUrl, publicId: "" };
     }
 
     await item.save();
 
     res.json({
       success: true,
-      data: item,
+      message: "Category updated successfully",
+      data: formatLabCategory(item),
     });
   } catch (err) {
     console.log("UPDATE ERROR:", err);
@@ -153,7 +196,7 @@ exports.deleteLabCategory = async (req, res) => {
       });
     }
 
-    // 🔥 image delete
+    // image delete
     if (item.image?.publicId) {
       await deleteFile(item.image.publicId);
     }
