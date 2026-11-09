@@ -3,6 +3,21 @@ const mongoose = require("mongoose");
 
 const medicineItemSchema = new mongoose.Schema(
   {
+    // ✅ PHARMACY & INVENTORY PRODUCT LINK (optional)
+    pharmacy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "PharmacyUser",
+      default: null,
+      index: true,
+    },
+
+    pharmacyProduct: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "PharmacyProduct",
+      default: null,
+      index: true,
+    },
+
     // ✅ CATEGORY REFERENCE (optional)
     medicineCategory: {
       type: mongoose.Schema.Types.ObjectId,
@@ -24,6 +39,12 @@ const medicineItemSchema = new mongoose.Schema(
 
     // ✅ PRODUCT NAME & DESCRIPTION (frontend uses description as product name)
     name: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    productTitle: {
       type: String,
       trim: true,
       default: "",
@@ -111,10 +132,25 @@ const medicineItemSchema = new mongoose.Schema(
       default: 1,
     },
 
-    // ✅ STOCK (null = unknown/enabled, 0 = out of stock/disabled, >0 = available)
+    // ✅ STOCK (whole integer >= 0; 0 = out of stock)
     stock: {
       type: Number,
-      default: null,
+      default: 0,
+      min: [0, "Stock cannot be negative"],
+      validate: {
+        validator: (value) => Number.isInteger(value) && value >= 0,
+        message: "Stock must be a non-negative whole number",
+      },
+    },
+
+    lowStockThreshold: {
+      type: Number,
+      default: 10,
+      min: [0, "Low stock threshold cannot be negative"],
+      validate: {
+        validator: (value) => Number.isInteger(value) && value >= 0,
+        message: "Low stock threshold must be a non-negative whole number",
+      },
     },
 
     isActive: {
@@ -127,14 +163,32 @@ const medicineItemSchema = new mongoose.Schema(
   }
 );
 
-// Pre-save hook to synchronize aliases and computed fields
-medicineItemSchema.pre("save", function (next) {
-  // Sync name and description
-  if (!this.description && this.name) {
-    this.description = this.name;
+medicineItemSchema.pre("validate", function () {
+  if (this.stock === null || this.stock === undefined) {
+    this.stock = 0;
   }
-  if (!this.name && this.description) {
-    this.name = this.description;
+  if (this.lowStockThreshold === null || this.lowStockThreshold === undefined) {
+    this.lowStockThreshold = 10;
+  }
+});
+
+// Pre-save hook to synchronize aliases and computed fields
+medicineItemSchema.pre("save", function () {
+  // Sync name, productTitle and description
+  const resolvedName = (
+    this.name ||
+    this.productTitle ||
+    this.description ||
+    ""
+  ).trim();
+  if (!this.description && resolvedName) {
+    this.description = resolvedName;
+  }
+  if (!this.name && resolvedName) {
+    this.name = resolvedName;
+  }
+  if (!this.productTitle && resolvedName) {
+    this.productTitle = resolvedName;
   }
 
   // Sync pricing aliases
@@ -187,8 +241,6 @@ medicineItemSchema.pre("save", function (next) {
       this.image = { url: this.imageUrl, publicId: "" };
     }
   }
-
-  next();
 });
 
 module.exports =

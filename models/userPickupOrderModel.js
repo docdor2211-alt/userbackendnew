@@ -8,14 +8,44 @@ const pickupItemSchema =
       required: true,
     },
 
+    productId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "PharmacyProduct",
+      default: null,
+    },
+
+    productModel: {
+      type: String,
+      enum: ["PharmacyProduct", "MedicineItem"],
+      default: "PharmacyProduct",
+    },
+
+    inventoryAllocations: [
+      {
+        purchaseId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "PharmacyPurchase",
+        },
+        purchaseItemId: {
+          type: mongoose.Schema.Types.ObjectId,
+        },
+        quantity: {
+          type: Number,
+          min: 1,
+        },
+      },
+    ],
+
     quantity: {
       type: Number,
       required: true,
+      min: [1, "Quantity must be at least 1"],
     },
 
     price: {
       type: Number,
       required: true,
+      min: [0, "Price cannot be negative"],
     },
 
     prescriptionId: {
@@ -104,11 +134,18 @@ const pickupOrderSchema =
 
       items: [pickupItemSchema],
 
+      inventoryAdjusted: {
+        type: Boolean,
+        default: false,
+      },
+
       totalAmount: {
 
         type: Number,
 
         default: 0,
+
+        min: 0,
 
       },
 
@@ -129,7 +166,9 @@ const pickupOrderSchema =
   );
 
 // IMPORTANT
-module.exports = mongoose.model(
-  "PickupOrder",
-  pickupOrderSchema
-);
+module.exports =
+  mongoose.models.PickupOrder ||
+  mongoose.model(
+    "PickupOrder",
+    pickupOrderSchema
+  );

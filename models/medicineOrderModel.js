@@ -135,8 +135,24 @@ const orderItemSchema = new mongoose.Schema(
   {
     product: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "MedicineItem",
       required: true,
+    },
+
+    productId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
+
+    productModel: {
+      type: String,
+      enum: ["MedicineItem", "PharmacyProduct"],
+      default: "MedicineItem",
+    },
+
+    pharmacy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "PharmacyUser",
+      default: null,
     },
 
     name: {
@@ -152,18 +168,42 @@ const orderItemSchema = new mongoose.Schema(
     quantity: {
       type: Number,
       required: true,
+      min: [1, "Quantity must be at least 1"],
       default: 1,
+    },
+
+    qty: {
+      type: Number,
+      min: 1,
     },
 
     price: {
       type: Number,
       required: true,
+      min: [0, "Price cannot be negative"],
     },
 
     totalPrice: {
       type: Number,
       required: true,
+      min: [0, "Total price cannot be negative"],
     },
+
+    inventoryAllocations: [
+      {
+        purchaseId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "PharmacyPurchase",
+        },
+        purchaseItemId: {
+          type: mongoose.Schema.Types.ObjectId,
+        },
+        quantity: {
+          type: Number,
+          min: 1,
+        },
+      },
+    ],
   },
   {
     _id: true,
@@ -187,6 +227,17 @@ const medicineOrderSchema = new mongoose.Schema(
     },
 
     // ===========================
+    // PHARMACY
+    // ===========================
+
+    pharmacy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "PharmacyUser",
+      default: null,
+      index: true,
+    },
+
+    // ===========================
     // RIDER
     // ===========================
 
@@ -205,6 +256,11 @@ const medicineOrderSchema = new mongoose.Schema(
       default: [],
     },
 
+    inventoryAdjusted: {
+      type: Boolean,
+      default: false,
+    },
+
     // ===========================
     // TOTAL
     // ===========================
@@ -212,6 +268,13 @@ const medicineOrderSchema = new mongoose.Schema(
     totalAmount: {
       type: Number,
       required: true,
+      min: 0,
+    },
+
+    total: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
 
     // ===========================
@@ -221,6 +284,12 @@ const medicineOrderSchema = new mongoose.Schema(
     deliveryAddress: {
       type: String,
       required: true,
+      trim: true,
+    },
+
+    address: {
+      type: String,
+      default: "",
       trim: true,
     },
 
@@ -256,6 +325,19 @@ const medicineOrderSchema = new mongoose.Schema(
         "CANCELLED",
       ],
       default: "PLACED",
+    },
+
+    status: {
+      type: String,
+      enum: [
+        "Pending",
+        "Accepted",
+        "Packed",
+        "Out For Delivery",
+        "Delivered",
+        "Cancelled",
+      ],
+      default: "Pending",
     },
 
     // ===========================

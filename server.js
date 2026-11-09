@@ -446,6 +446,12 @@ app.use(
   )
 );
 
+// ✅ PHARMACY PRODUCTS ROUTES (Dynamic Inventory for User App)
+app.use(
+  "/api/pharmacy-products",
+  require("./routes/pharmacyProductRoutes")
+);
+
 app.use(
   "/api/featured-services",
   require("./routes/featuredServiceRoutes")
