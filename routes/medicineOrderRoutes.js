@@ -160,6 +160,7 @@ const {
   getMyMedicineOrders,
   getOrdersByUserId,
   updateMedicineOrderStatus,
+  cancelOrder,
 } = require(
   "../controllers/medicineOrderController"
 );
@@ -270,6 +271,12 @@ router.get(
   "/user/:userId",
   optionalAuth,
   getOrdersByUserId
+);
+
+router.put(
+  "/cancel/:id",
+  protect,
+  cancelOrder
 );
 
 // ==========================================

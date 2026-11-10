@@ -1,6 +1,19 @@
 const mongoose = require("mongoose");
 const MedicineItem = require("../models/medicineItem.model");
+require("../models/medicineSubCategory.model");
+const PharmacyProduct = require("../models/pharmacyProductModel");
 const { uploadFile, deleteFile } = require("../utils/bunnyUpload");
+const {
+  parseNonNegativeInt,
+  parsePositiveInt,
+  parseNonNegativeNumber,
+  buildStockMeta,
+  enrichMedicineItemsWithLiveStock,
+  emitStockUpdated,
+} = require("../utils/pharmacyInventorySync");
+
+const escapeRegex = (value) =>
+  String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // ============================================
 // 🛠️ HELPER: FORMAT MEDICINE ITEM
@@ -40,13 +53,23 @@ function formatMedicineItem(item) {
     ""
   ).toString();
 
-  const description = doc.description || doc.name || "";
-  const name = doc.name || doc.description || "";
+  const resolvedTitle = (
+    doc.name ||
+    doc.productTitle ||
+    doc.description ||
+    ""
+  ).trim();
+  const description = (doc.description || resolvedTitle).trim();
+  const name = resolvedTitle;
+  const stockMeta = buildStockMeta(doc.stock, doc.lowStockThreshold);
 
   return {
     _id: doc._id?.toString() || "",
     id: doc._id?.toString() || "",
+    pharmacy: doc.pharmacy || null,
+    pharmacyProduct: doc.pharmacyProduct || null,
     name,
+    productTitle: (doc.productTitle || resolvedTitle).trim(),
     description,
     type: doc.type || "Strip of tablets",
     delivery: doc.delivery || "Delivery by Tomorrow 9 PM",
@@ -63,7 +86,7 @@ function formatMedicineItem(item) {
     medicineSubCategory: doc.medicineSubCategory || subCatId,
     medicineItems: Array.isArray(doc.medicineItems) ? doc.medicineItems : [],
     quantity: typeof doc.quantity === "number" ? doc.quantity : 1,
-    stock: doc.stock !== undefined ? doc.stock : null,
+    ...stockMeta,
     isActive: doc.isActive !== undefined ? doc.isActive : true,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
@@ -76,10 +99,13 @@ function formatMedicineItem(item) {
 exports.createMedicine = async (req, res) => {
   try {
     const {
+      pharmacy,
+      pharmacyProduct,
       medicineCategory,
       medicineSubCategory,
       subCategoryId,
       name,
+      productTitle,
       description,
       type,
       delivery,
@@ -94,13 +120,40 @@ exports.createMedicine = async (req, res) => {
       medicineItems,
       quantity,
       stock,
+      lowStockThreshold,
       isActive,
     } = req.body;
 
+    if (pharmacy && !mongoose.Types.ObjectId.isValid(pharmacy)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid pharmacy ID",
+      });
+    }
+
+    let linkedPharmacyProduct = null;
+    if (pharmacyProduct) {
+      if (!mongoose.Types.ObjectId.isValid(pharmacyProduct)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid pharmacyProduct ID",
+        });
+      }
+      linkedPharmacyProduct = await PharmacyProduct.findById(pharmacyProduct);
+      if (!linkedPharmacyProduct) {
+        return res.status(404).json({
+          success: false,
+          message: "Linked pharmacy product not found",
+        });
+      }
+    }
+
     const targetSubCategory = medicineSubCategory || subCategoryId;
-    const displayName = (name || description || "").trim();
-    const sellingPrice = Number(newPrice ?? price ?? mrp ?? 0);
-    const regularPrice = Number(oldPrice ?? originalPrice ?? sellingPrice);
+    const displayName = (name || productTitle || description || "").trim();
+    const rawSellingPrice = newPrice ?? price ?? mrp ?? 0;
+    const sellingPrice = parseNonNegativeNumber(rawSellingPrice);
+    const rawRegularPrice = oldPrice ?? originalPrice ?? sellingPrice ?? 0;
+    const regularPrice = parseNonNegativeNumber(rawRegularPrice);
 
     if (!displayName) {
       return res.status(400).json({
@@ -109,11 +162,46 @@ exports.createMedicine = async (req, res) => {
       });
     }
 
-    if (sellingPrice < 0) {
+    if (sellingPrice === null || regularPrice === null) {
       return res.status(400).json({
         success: false,
-        message: "Valid price is required",
+        message: "Valid non-negative price and MRP are required",
       });
+    }
+
+    let validatedQuantity = 1;
+    if (quantity !== undefined) {
+      validatedQuantity = parsePositiveInt(quantity);
+      if (validatedQuantity === null) {
+        return res.status(400).json({
+          success: false,
+          message: "Quantity must be a positive whole number",
+        });
+      }
+    }
+
+    let validatedStock = linkedPharmacyProduct ? linkedPharmacyProduct.stock : 0;
+    if (stock !== undefined) {
+      validatedStock = parseNonNegativeInt(stock);
+      if (validatedStock === null) {
+        return res.status(400).json({
+          success: false,
+          message: "Stock must be a non-negative whole number",
+        });
+      }
+    }
+
+    let validatedThreshold = linkedPharmacyProduct
+      ? linkedPharmacyProduct.lowStockThreshold ?? 10
+      : 10;
+    if (lowStockThreshold !== undefined) {
+      validatedThreshold = parseNonNegativeInt(lowStockThreshold);
+      if (validatedThreshold === null) {
+        return res.status(400).json({
+          success: false,
+          message: "Low stock threshold must be a non-negative whole number",
+        });
+      }
     }
 
     let imageData = null;
@@ -169,10 +257,13 @@ exports.createMedicine = async (req, res) => {
     }
 
     const data = await MedicineItem.create({
+      pharmacy: pharmacy || linkedPharmacyProduct?.pharmacy || null,
+      pharmacyProduct: linkedPharmacyProduct?._id || null,
       medicineCategory: medicineCategory || null,
       medicineSubCategory: targetSubCategory || null,
       subCategoryId: targetSubCategory ? targetSubCategory.toString() : "",
       name: displayName,
+      productTitle: (productTitle || displayName).trim(),
       description: description || displayName,
       type: type || "Strip of tablets",
       delivery: delivery || "Delivery by Tomorrow 9 PM",
@@ -185,19 +276,36 @@ exports.createMedicine = async (req, res) => {
       imageUrl: imageData.url || imageUrl || "",
       image: imageData,
       medicineItems: itemsArray,
-      quantity: Number(quantity) || 1,
-      stock: stock !== undefined && stock !== null ? Number(stock) : null,
+      quantity: validatedQuantity,
+      stock: validatedStock,
+      lowStockThreshold: validatedThreshold,
       isActive: isActive !== undefined ? isActive : true,
+    });
+
+    const [enriched] = await enrichMedicineItemsWithLiveStock([data]);
+    const formatted = formatMedicineItem(enriched);
+
+    emitStockUpdated(req, {
+      source: "medicine_item_created",
+      products: [
+        {
+          productId: formatted._id,
+          name: formatted.name,
+          stock: formatted.stock,
+          inStock: formatted.inStock,
+          stockStatus: formatted.stockStatus,
+        },
+      ],
     });
 
     res.status(201).json({
       success: true,
       message: "Medicine created successfully",
-      data: formatMedicineItem(data),
+      data: formatted,
     });
   } catch (err) {
     console.error("CREATE MEDICINE ERROR:", err);
-    res.status(500).json({
+    res.status(err.name === "ValidationError" ? 400 : 500).json({
       success: false,
       message: err.message,
     });
@@ -213,55 +321,87 @@ exports.getMedicines = async (req, res) => {
     const medicineCategory = req.query.medicineCategory || "";
     const subCategoryId =
       req.query.subCategoryId || req.query.medicineSubCategory || "";
+    const pharmacy = req.query.pharmacy || req.query.pharmacyId || "";
 
-    const query = {
-      isActive: true,
-    };
+    const andConditions = [{ isActive: true }];
 
     if (search) {
-      query.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
-      ];
+      const escapedSearch = escapeRegex(search.trim());
+      andConditions.push({
+        $or: [
+          { name: { $regex: escapedSearch, $options: "i" } },
+          { productTitle: { $regex: escapedSearch, $options: "i" } },
+          { description: { $regex: escapedSearch, $options: "i" } },
+        ],
+      });
     }
 
     if (medicineCategory) {
-      query.medicineCategory = medicineCategory;
+      if (!mongoose.Types.ObjectId.isValid(medicineCategory)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid category ID",
+        });
+      }
+      andConditions.push({ medicineCategory });
+    }
+
+    if (pharmacy) {
+      if (!mongoose.Types.ObjectId.isValid(pharmacy)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid pharmacy ID",
+        });
+      }
+      andConditions.push({ pharmacy });
     }
 
     if (subCategoryId) {
-      query.$or = query.$or || [];
-      query.$and = [
-        {
-          $or: [
-            { medicineSubCategory: subCategoryId },
-            { subCategoryId: subCategoryId },
-          ],
-        },
-      ];
+      andConditions.push({
+        $or: [
+          { medicineSubCategory: subCategoryId },
+          { subCategoryId: subCategoryId },
+        ],
+      });
     }
 
-    const hasLimit = Boolean(req.query.limit);
-    const hasPage = Boolean(req.query.page);
+    const inStockParam = String(req.query.inStock || "").toLowerCase();
+    const hideOutOfStock =
+      String(
+        req.query.hideOutOfStock || req.query.excludeOutOfStock || ""
+      ).toLowerCase() === "true";
 
-    const total = await MedicineItem.countDocuments(query);
+    const query =
+      andConditions.length === 1 ? andConditions[0] : { $and: andConditions };
 
-    let findQuery = MedicineItem.find(query)
+    const allMatches = await MedicineItem.find(query)
       .populate("medicineSubCategory", "title name")
       .sort({ createdAt: -1 });
 
-    let page = 1;
-    let limit = total;
+    let enriched = (await enrichMedicineItemsWithLiveStock(allMatches)).map(
+      formatMedicineItem
+    );
 
-    if (hasLimit || hasPage) {
-      page = Math.max(parseInt(req.query.page) || 1, 1);
-      limit = Math.max(parseInt(req.query.limit) || 10, 1);
-      const skip = (page - 1) * limit;
-      findQuery = findQuery.skip(skip).limit(limit);
+    if (inStockParam === "true" || hideOutOfStock) {
+      enriched = enriched.filter((item) => item.stock > 0);
+    } else if (inStockParam === "false") {
+      enriched = enriched.filter((item) => item.stock <= 0);
     }
 
-    const medicines = await findQuery;
-    const formatted = medicines.map(formatMedicineItem);
+    const total = enriched.length;
+    const hasLimit = Boolean(req.query.limit);
+    const hasPage = Boolean(req.query.page);
+
+    let page = 1;
+    let limit = total;
+    let formatted = enriched;
+
+    if (hasLimit || hasPage) {
+      page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+      limit = Math.max(parseInt(req.query.limit, 10) || 10, 1);
+      const skip = (page - 1) * limit;
+      formatted = enriched.slice(skip, skip + limit);
+    }
 
     res.json({
       success: true,
@@ -285,12 +425,13 @@ exports.getMedicines = async (req, res) => {
 exports.getBySubCategory = async (req, res) => {
   try {
     const subCatId = req.params.id;
+    const orConditions = [{ subCategoryId: subCatId }];
+    if (mongoose.Types.ObjectId.isValid(subCatId)) {
+      orConditions.unshift({ medicineSubCategory: subCatId });
+    }
 
     const medicines = await MedicineItem.find({
-      $or: [
-        { medicineSubCategory: subCatId },
-        { subCategoryId: subCatId },
-      ],
+      $or: orConditions,
       isActive: true,
     })
       .populate("medicineSubCategory", "title name")
@@ -298,7 +439,21 @@ exports.getBySubCategory = async (req, res) => {
         createdAt: -1,
       });
 
-    const formatted = medicines.map(formatMedicineItem);
+    let formatted = (await enrichMedicineItemsWithLiveStock(medicines)).map(
+      formatMedicineItem
+    );
+
+    const inStockParam = String(req.query.inStock || "").toLowerCase();
+    const hideOutOfStock =
+      String(
+        req.query.hideOutOfStock || req.query.excludeOutOfStock || ""
+      ).toLowerCase() === "true";
+
+    if (inStockParam === "true" || hideOutOfStock) {
+      formatted = formatted.filter((item) => item.stock > 0);
+    } else if (inStockParam === "false") {
+      formatted = formatted.filter((item) => item.stock <= 0);
+    }
 
     res.json({
       success: true,
@@ -319,6 +474,13 @@ exports.getBySubCategory = async (req, res) => {
 // ============================================
 exports.getMedicineById = async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid medicine ID",
+      });
+    }
+
     const medicine = await MedicineItem.findById(req.params.id).populate(
       "medicineSubCategory",
       "title name"
@@ -331,7 +493,8 @@ exports.getMedicineById = async (req, res) => {
       });
     }
 
-    const formatted = formatMedicineItem(medicine);
+    const [enriched] = await enrichMedicineItemsWithLiveStock([medicine]);
+    const formatted = formatMedicineItem(enriched);
 
     res.json({
       success: true,
@@ -354,6 +517,13 @@ exports.getMedicineById = async (req, res) => {
 // ============================================
 exports.updateMedicine = async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid medicine ID",
+      });
+    }
+
     const medicine = await MedicineItem.findById(req.params.id);
 
     if (!medicine) {
@@ -364,10 +534,13 @@ exports.updateMedicine = async (req, res) => {
     }
 
     const {
+      pharmacy,
+      pharmacyProduct,
       medicineCategory,
       medicineSubCategory,
       subCategoryId,
       name,
+      productTitle,
       description,
       type,
       delivery,
@@ -382,8 +555,44 @@ exports.updateMedicine = async (req, res) => {
       medicineItems,
       quantity,
       stock,
+      lowStockThreshold,
       isActive,
     } = req.body;
+
+    if (pharmacy !== undefined) {
+      if (pharmacy && !mongoose.Types.ObjectId.isValid(pharmacy)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid pharmacy ID",
+        });
+      }
+      medicine.pharmacy = pharmacy || null;
+    }
+
+    if (pharmacyProduct !== undefined) {
+      if (pharmacyProduct) {
+        if (!mongoose.Types.ObjectId.isValid(pharmacyProduct)) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid pharmacyProduct ID",
+          });
+        }
+        const linked = await PharmacyProduct.findById(pharmacyProduct);
+        if (!linked) {
+          return res.status(404).json({
+            success: false,
+            message: "Linked pharmacy product not found",
+          });
+        }
+        medicine.pharmacyProduct = linked._id;
+        medicine.pharmacy = medicine.pharmacy || linked.pharmacy;
+        if (stock === undefined) {
+          medicine.stock = linked.stock;
+        }
+      } else {
+        medicine.pharmacyProduct = null;
+      }
+    }
 
     if (medicineCategory !== undefined) medicine.medicineCategory = medicineCategory;
     if (medicineSubCategory !== undefined || subCategoryId !== undefined) {
@@ -393,18 +602,31 @@ exports.updateMedicine = async (req, res) => {
     }
 
     if (name !== undefined) medicine.name = name;
+    if (productTitle !== undefined) medicine.productTitle = productTitle;
     if (description !== undefined) medicine.description = description;
     if (type !== undefined) medicine.type = type;
     if (delivery !== undefined) medicine.delivery = delivery;
 
     if (newPrice !== undefined || price !== undefined) {
-      const p = Number(newPrice ?? price);
+      const p = parseNonNegativeNumber(newPrice ?? price);
+      if (p === null) {
+        return res.status(400).json({
+          success: false,
+          message: "Price must be a valid non-negative number",
+        });
+      }
       medicine.newPrice = p;
       medicine.price = p;
     }
 
     if (oldPrice !== undefined || mrp !== undefined || originalPrice !== undefined) {
-      const op = Number(oldPrice ?? mrp ?? originalPrice);
+      const op = parseNonNegativeNumber(oldPrice ?? mrp ?? originalPrice);
+      if (op === null) {
+        return res.status(400).json({
+          success: false,
+          message: "MRP / oldPrice must be a valid non-negative number",
+        });
+      }
       medicine.oldPrice = op;
       medicine.mrp = op;
     }
@@ -419,10 +641,40 @@ exports.updateMedicine = async (req, res) => {
     }
 
     if (prescription !== undefined) medicine.prescription = Boolean(prescription);
-    if (quantity !== undefined) medicine.quantity = Number(quantity);
-    if (stock !== undefined) {
-      medicine.stock = stock !== null ? Number(stock) : null;
+
+    if (quantity !== undefined) {
+      const parsedQuantity = parsePositiveInt(quantity);
+      if (parsedQuantity === null) {
+        return res.status(400).json({
+          success: false,
+          message: "Quantity must be a positive whole number",
+        });
+      }
+      medicine.quantity = parsedQuantity;
     }
+
+    if (stock !== undefined) {
+      const parsedStock = parseNonNegativeInt(stock);
+      if (parsedStock === null) {
+        return res.status(400).json({
+          success: false,
+          message: "Stock must be a non-negative whole number",
+        });
+      }
+      medicine.stock = parsedStock;
+    }
+
+    if (lowStockThreshold !== undefined) {
+      const parsedThreshold = parseNonNegativeInt(lowStockThreshold);
+      if (parsedThreshold === null) {
+        return res.status(400).json({
+          success: false,
+          message: "Low stock threshold must be a non-negative whole number",
+        });
+      }
+      medicine.lowStockThreshold = parsedThreshold;
+    }
+
     if (medicineItems !== undefined) {
       medicine.medicineItems = Array.isArray(medicineItems)
         ? medicineItems
@@ -461,14 +713,59 @@ exports.updateMedicine = async (req, res) => {
 
     await medicine.save();
 
+    if (
+      (stock !== undefined || lowStockThreshold !== undefined) &&
+      medicine.pharmacyProduct
+    ) {
+      const syncFields = {};
+      if (stock !== undefined) syncFields.stock = medicine.stock;
+      if (lowStockThreshold !== undefined) {
+        syncFields.lowStockThreshold = medicine.lowStockThreshold;
+      }
+
+      const updatedProd = await PharmacyProduct.findByIdAndUpdate(
+        medicine.pharmacyProduct,
+        { $set: syncFields },
+        { new: true }
+      );
+      if (updatedProd) {
+        await MedicineItem.updateMany(
+          { pharmacyProduct: updatedProd._id, _id: { $ne: medicine._id } },
+          {
+            $set: {
+              stock: updatedProd.stock,
+              lowStockThreshold: updatedProd.lowStockThreshold ?? 10,
+            },
+          }
+        );
+      }
+    }
+
+    const [enriched] = await enrichMedicineItemsWithLiveStock([medicine]);
+    const formatted = formatMedicineItem(enriched);
+
+    emitStockUpdated(req, {
+      source: "medicine_item_updated",
+      products: [
+        {
+          productId: formatted._id,
+          pharmacyProductId: formatted.pharmacyProduct || null,
+          name: formatted.name,
+          stock: formatted.stock,
+          inStock: formatted.inStock,
+          stockStatus: formatted.stockStatus,
+        },
+      ],
+    });
+
     res.json({
       success: true,
       message: "Medicine updated successfully",
-      data: formatMedicineItem(medicine),
+      data: formatted,
     });
   } catch (err) {
     console.error("UPDATE MEDICINE ERROR:", err);
-    res.status(500).json({
+    res.status(err.name === "ValidationError" ? 400 : 500).json({
       success: false,
       message: err.message,
     });
@@ -480,6 +777,13 @@ exports.updateMedicine = async (req, res) => {
 // ============================================
 exports.deleteMedicine = async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid medicine ID",
+      });
+    }
+
     const medicine = await MedicineItem.findById(req.params.id);
 
     if (!medicine) {
@@ -494,6 +798,11 @@ exports.deleteMedicine = async (req, res) => {
     }
 
     await medicine.deleteOne();
+
+    emitStockUpdated(req, {
+      source: "medicine_item_deleted",
+      products: [{ productId: req.params.id }],
+    });
 
     res.json({
       success: true,
